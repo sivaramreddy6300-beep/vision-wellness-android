@@ -22,6 +22,7 @@ import com.example.visionwellness.detection.CameraFrameProcessor
 import com.example.visionwellness.detection.EyeDetectionEngine
 import com.example.visionwellness.database.BlinkDatabase
 import com.example.visionwellness.database.BlinkEntity
+import com.example.visionwellness.ui.AlertOverlayManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -46,6 +47,7 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
 
     private lateinit var eyeDetectionEngine: EyeDetectionEngine
     private lateinit var frameProcessor: CameraFrameProcessor
+    private lateinit var overlayManager: AlertOverlayManager
     private lateinit var database: BlinkDatabase
     private val serviceScope = CoroutineScope(Dispatchers.IO)
 
@@ -90,6 +92,7 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
         try {
             cameraManager = getSystemService(CAMERA_SERVICE) as CameraManager
             database = BlinkDatabase.getInstance(this)
+            overlayManager = AlertOverlayManager(this)
 
             eyeDetectionEngine = EyeDetectionEngine(this, this)
             frameProcessor = CameraFrameProcessor(eyeDetectionEngine)
@@ -292,6 +295,7 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
         try {
             frameProcessor.release()
             eyeDetectionEngine.release()
+            overlayManager.release()
             Timber.d("Resources cleaned up")
         } catch (e: Exception) {
             Timber.e(e, "Error during cleanup")
@@ -351,10 +355,10 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
     }
 
     /**
-     * Trigger staring alert (to be integrated with OverlayView)
+     * Trigger staring alert overlay
      */
     private fun triggerStaringAlert() {
-        // TODO: Trigger overlay alert
-        Timber.w("Triggering staring alert to UI")
+        Timber.w("Triggering staring alert overlay")
+        overlayManager.triggerStaringAlert()
     }
 }

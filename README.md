@@ -34,10 +34,15 @@ vision-wellness-android/
 │   │   │   │   ├── MainActivity.kt
 │   │   │   │   ├── services/
 │   │   │   │   │   └── EyeTrackingService.kt
+│   │   │   │   ├── detection/
+│   │   │   │   │   ├── EyeDetectionEngine.kt
+│   │   │   │   │   ├── BlinkDetectionListener.kt
+│   │   │   │   │   └── CameraFrameProcessor.kt
 │   │   │   │   ├── camera/
 │   │   │   │   │   └── CameraManager.kt
 │   │   │   │   ├── ui/
-│   │   │   │   │   └── OverlayView.kt
+│   │   │   │   │   ├── OverlayView.kt
+│   │   │   │   │   └── AlertOverlayManager.kt
 │   │   │   │   └── database/
 │   │   │   │       ├── BlinkDatabase.kt
 │   │   │   │       ├── BlinkEntity.kt
@@ -45,7 +50,7 @@ vision-wellness-android/
 │   │   │   └── res/
 │   │   │       ├── layout/activity_main.xml
 │   │   │       ├── values/strings.xml
-│   │   │       └── drawable/ic_eye_tracking.xml
+│   │   │       └── raw/face_landmarker.task
 │   ├── build.gradle.kts
 │   └── proguard-rules.pro
 ├── build.gradle.kts
@@ -59,6 +64,7 @@ vision-wellness-android/
 - Android Studio Giraffe (2022.3.1) or later
 - Android SDK 34 or higher
 - Kotlin 1.9.22 or later
+- **MediaPipe Face Landmarker model** (required)
 
 ### Setup Instructions
 
@@ -68,21 +74,30 @@ vision-wellness-android/
    cd vision-wellness-android
    ```
 
-2. **Open in Android Studio**
+2. **Download MediaPipe Model**
+   ```bash
+   # Download the face landmarker model
+   wget https://storage.googleapis.com/mediapipe-assets/face_landmarker.task
+   
+   # Place it in the resources folder
+   cp face_landmarker.task app/src/main/res/raw/
+   ```
+
+3. **Open in Android Studio**
    - File → Open → Select the project directory
    - Wait for Gradle sync to complete
 
-3. **Build the Project**
+4. **Build the Project**
    ```bash
    ./gradlew build
    ```
 
-4. **Run on Device/Emulator**
+5. **Run on Device/Emulator**
    ```bash
    ./gradlew installDebug
    ```
 
-5. **Launch the App**
+6. **Launch the App**
    - Find "Vision Wellness" in your app drawer
    - Grant camera and overlay permissions when prompted
    - Eye tracking service will start automatically
@@ -94,9 +109,50 @@ vision-wellness-android/
 - `SYSTEM_ALERT_WINDOW` - Display overlay for staring alerts
 - `INTERNET` - Future analytics synchronization (optional)
 
+## 🎨 Phase 3: Alert Overlay System (Complete)
+
+### What's Included
+
+**AlertOverlayManager.kt**
+- Manages system-wide overlay window
+- Uses `TYPE_APPLICATION_OVERLAY` for Android 8.0+
+- `TYPE_PHONE` for older devices
+- Non-focusable, non-touchable window (doesn't block user interaction)
+
+**OverlayView.kt**
+- Custom view rendering blue border gradient
+- Smooth fade-in/hold/fade-out animation
+- Animation timeline:
+  - 0-200ms: Fade in (opacity 0 → 255)
+  - 200-600ms: Hold at full opacity
+  - 600-800ms: Fade out (opacity 255 → 0)
+
+**Integration**
+- `AlertOverlayManager` instantiated in `EyeTrackingService`
+- Triggered by `onStaringDetected()` callback
+- Non-intrusive (won't interfere with user's current app)
+
+### How It Works
+
+```
+User staring for 5+ seconds
+    ↓
+EyeDetectionEngine detects staring
+    ↓
+Calls onStaringDetected()
+    ↓
+EyeTrackingService.triggerStaringAlert()
+    ↓
+AlertOverlayManager.showAlert()
+    ↓
+OverlayView displays blue border with animation
+    ↓
+User blinks → Overlay triggers again on next staring event
+```
+
 ## 🧠 AI Agent Workflow
 
-This project is designed to be built incrementally using AI agents. Each phase has ready-to-use prompts:
+This project is designed to be built incrementally using AI agents:
 
 ### Phase 1: ✅ Core Architecture (Complete)
 - Foreground Service setup
@@ -105,62 +161,44 @@ This project is designed to be built incrementally using AI agents. Each phase h
 - UI boilerplate
 - Database schema
 
-### Phase 2: Eye Detection Engine (Ready for Agent)
-**Assign to: Computer Vision Developer Agent**
+### Phase 2: ✅ Eye Detection Engine (Complete)
+- MediaPipe Face Mesh integration
+- Eye Aspect Ratio calculation
+- Blink detection with debounce
+- Staring detection (5+ seconds)
+- Frame throttling (30fps → 8fps)
 
-```
-Act as a Computer Vision Expert. I have a working Android Foreground Service 
-that captures frames from the front camera at 8 fps using Camera2 API. 
+### Phase 3: ✅ Alert Overlay System (Complete)
+- System-wide overlay window
+- Blue border gradient animation
+- Fade-in/hold/fade-out sequence
+- Non-intrusive UI (doesn't block interaction)
+- Works on top of all apps
 
-Now integrate Google MediaPipe Face Mesh to:
-1. Detect facial landmarks in real-time
-2. Calculate the Eye Aspect Ratio (EAR) for both eyes using the formula:
-   EAR = (||p2 - p6|| + ||p3 - p5||) / (2 * ||p1 - p4||)
-3. Trigger a callback when EAR drops below 0.2 (blink detected)
-4. Track staring duration when EAR stays above 0.3 for >5 seconds
-5. Provide a debounce mechanism (100ms) to avoid false positives
-6. Return blink events via a callback interface
-
-The processing should happen on a background thread to avoid blocking the camera stream.
-```
-
-### Phase 3: UI/UX Overlay System (Ready for Agent)
-**Assign to: UI/UX Developer Agent**
-
-```
-Build a System Alert Window overlay in Kotlin/Android that:
-1. Displays a subtle blue border gradient when user is staring
-2. Fades in over 200ms, holds for 400ms, then fades out
-3. Doesn't interfere with user interactions on other apps
-4. Respects DO_NOT_DISTURB settings
-5. Can be toggled on/off from the main activity
-6. Uses WindowManager.LayoutParams with TYPE_APPLICATION_OVERLAY
-```
-
-### Phase 4: Battery & Performance Optimization (Ready for Agent)
+### Phase 4: ⏳ Battery & Performance Optimization (Ready for Agent)
 **Assign to: DevOps & Optimization Agent**
 
 ```
 Review and optimize the camera framework for battery efficiency:
-1. Implement throttling to reduce frame processing from 30fps to 8fps
-2. Add proximity sensor detection to pause tracking when screen is off
-3. Implement adaptive bitrate based on device temperature
-4. Profile memory usage and identify leaks
-5. Add battery usage telemetry
-6. Provide background task scheduling using WorkManager
+1. Profile current battery usage with Android Profiler
+2. Implement adaptive frame rate based on device load
+3. Add proximity sensor detection to pause tracking when screen is off
+4. Implement temperature-aware throttling
+5. Add WorkManager for background scheduling
+6. Optimize YUV to RGB conversion (currently a placeholder)
+7. Add battery usage telemetry and reporting
 ```
 
-### Phase 5: Local Analytics Database (Ready for Agent)
-**Assign to: Software Architect Agent**
+### Phase 5: ✅ Local Analytics Database (Schema Complete)
+**Optional enhancement: Implement reporting dashboard**
 
 ```
-Design and implement a local SQLite database schema using Room ORM to:
-1. Store hourly blink count statistics
-2. Track average staring duration intervals
-3. Calculate daily eye health compliance scores
-4. Generate weekly/monthly reports
-5. Export data for user review
-6. Implement automatic data cleanup (retain 90 days of data)
+Create a statistics screen to display:
+1. Daily blink count
+2. Average blink rate per minute
+3. Total staring time today
+4. Trends over the week
+5. Export data for health records
 ```
 
 ## 📊 Architecture Overview
@@ -177,20 +215,17 @@ Design and implement a local SQLite database schema using Room ORM to:
 │  (Manages camera stream & detection loop)   │
 └────────────────┬────────────────────────────┘
                  │
-    ┌────────────┼────────────┐
-    ▼            ▼            ▼
-┌─────────┐ ┌──────────┐ ┌──────────┐
-│ Camera  │ │MediaPipe │ │ Overlay  │
-│Manager  │ │ Face Mesh│ │ View     │
-└─────────┘ └──────────┘ └──────────┘
-    │            │            │
-    └────────────┼────────────┘
+    ┌────────────┼────────────┬───────────────┐
+    ▼            ▼            ▼               ▼
+┌─────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐
+│ Camera  │ │MediaPipe │ │ Overlay  │ │   Database   │
+│Manager  │ │ Face Mesh│ │ Manager  │ │ (SQLite/Room)│
+└─────────┘ └──────────┘ └──────────┘ └──────────────┘
+    │            │            │               │
+    └────────────┼────────────┴───────────────┘
                  │
-                 ▼
-        ┌──────────────────┐
-        │  BlinkDatabase   │
-        │  (SQLite/Room)   │
-        └──────────────────┘
+        Frame Processing Loop
+           (8fps throttled)
 ```
 
 ## 🔧 Configuration
@@ -202,47 +237,72 @@ Design and implement a local SQLite database schema using Room ORM to:
 - **EAR Threshold (Staring)**: 0.3
 - **Staring Duration**: 5 seconds
 
+### Overlay Settings
+- **Animation Duration**: 800ms total
+- **Fade In**: 200ms
+- **Hold**: 400ms
+- **Fade Out**: 200ms
+- **Border Thickness**: 8dp
+- **Border Color**: Blue
+- **Window Type**: OVERLAY (top layer)
+
 ### Notification Settings
 - **Channel**: Low priority background service
 - **Auto-dismiss**: No (persistent)
 - **Sound/Vibration**: Disabled
+- **Foreground Service Type**: Camera
 
 ## 📈 Testing Checklist
 
 - [ ] App starts without crashing
 - [ ] Camera permissions are requested and granted
+- [ ] Overlay permissions are requested and granted
 - [ ] Foreground service notification appears
 - [ ] Camera feed is accessible
 - [ ] Eye landmarks are detected on device
-- [ ] Blinks are recognized reliably
-- [ ] Overlay appears when staring detected
+- [ ] Blinks are recognized reliably (5-20 blinks/min normal range)
+- [ ] Staring is detected after 5+ seconds without blinking
+- [ ] Blue overlay appears when staring detected
+- [ ] Overlay animation is smooth (fade in, hold, fade out)
+- [ ] Overlay doesn't block user interaction with other apps
 - [ ] Blink data is saved to database
 - [ ] Battery drain is minimal (< 5% per hour)
-- [ ] App doesn't interfere with other apps
+- [ ] App doesn't interfere with other apps using camera
 
 ## 🐛 Troubleshooting
 
 ### Camera Not Accessible
-- Verify CAMERA permission is granted
+- Verify CAMERA permission is granted in Settings
 - Check if another app is using the camera
-- Restart the app
-
-### High Battery Drain
-- Reduce frame processing rate further
-- Check for memory leaks using Android Profiler
-- Verify MediaPipe is running on GPU
+- Restart the app and device if needed
 
 ### Overlay Not Showing
 - Ensure SYSTEM_ALERT_WINDOW permission is granted
 - Check device is not in Do Not Disturb mode
-- Verify WindowManager LayoutParams are correct
+- Verify overlay window is being created (check logcat)
+- Try granting overlay permission in Settings → Advanced
+
+### High Battery Drain
+- Reduce frame processing rate further (currently 8fps)
+- Check for memory leaks using Android Profiler
+- Verify YUV to RGB conversion is not blocking UI thread
+- Disable other background services
+
+### Poor Blink Detection
+- Ensure adequate lighting on face
+- Check that front camera is not obstructed
+- Verify MediaPipe model is properly placed in res/raw/
+- Adjust EAR thresholds if needed
 
 ## 📚 Resources
 
 - [MediaPipe Documentation](https://developers.google.com/mediapipe)
+- [MediaPipe Face Landmarker](https://developers.google.com/mediapipe/solutions/vision/face_landmarker)
 - [Android Camera2 API](https://developer.android.com/reference/android/hardware/camera2/package-summary)
 - [Android Foreground Services](https://developer.android.com/guide/components/foreground-services)
+- [WindowManager.LayoutParams](https://developer.android.com/reference/android/view/WindowManager.LayoutParams)
 - [Room Database](https://developer.android.com/training/data-storage/room)
+- [Kotlin Coroutines](https://kotlinlang.org/docs/coroutines-overview.html)
 
 ## 📄 License
 
@@ -259,3 +319,5 @@ For issues or questions, please open a GitHub issue or contact the development t
 ---
 
 **Built with AI-assisted development** 🤖✨
+
+**Current Status**: Phase 3 (Alert Overlay System) ✅ COMPLETE
