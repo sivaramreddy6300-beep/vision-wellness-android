@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Vision Wellness</string>
+    <string name="notification_title">Vision Wellness</string>
+    <string name="notification_text">Monitoring your eye health...</string>
+    <string name="service_running">Eye tracking service is running</string>
+    <string name="stop_service">Stop Service</string>
+</resources>
