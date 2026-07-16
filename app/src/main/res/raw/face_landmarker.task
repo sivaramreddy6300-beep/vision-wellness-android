@@ -1,0 +1,3 @@
+# This file should contain the MediaPipe Face Landmarker model
+# Download from: https://storage.googleapis.com/mediapipe-assets/face_landmarker.task
+# Place this binary file in app/src/main/res/raw/
