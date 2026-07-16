@@ -17,6 +17,10 @@ import android.os.IBinder
 import android.view.Surface
 import androidx.core.app.NotificationCompat
 import com.example.visionwellness.R
+import com.example.visionwellness.advanced.CloudSyncManager
+import com.example.visionwellness.advanced.GazeTrackingEngine
+import com.example.visionwellness.advanced.IrisRecognitionEngine
+import com.example.visionwellness.advanced.NotificationCustomizer
 import com.example.visionwellness.detection.BlinkDetectionListener
 import com.example.visionwellness.detection.EyeDetectionEngine
 import com.example.visionwellness.detection.OptimizedCameraFrameProcessor
@@ -62,6 +66,12 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
     private lateinit var memoryProfiler: MemoryProfiler
     private lateinit var backgroundTaskScheduler: BackgroundTaskScheduler
 
+    // Advanced features
+    private lateinit var irisRecognitionEngine: IrisRecognitionEngine
+    private lateinit var gazeTrackingEngine: GazeTrackingEngine
+    private lateinit var notificationCustomizer: NotificationCustomizer
+    private lateinit var cloudSyncManager: CloudSyncManager
+
     private val serviceScope = CoroutineScope(Dispatchers.IO)
 
     private var blinkCountToday = 0
@@ -105,7 +115,7 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
     }
 
     /**
-     * Initialize all components including optimization modules
+     * Initialize all components including advanced features
      */
     private fun initializeComponents() {
         try {
@@ -128,6 +138,12 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
 
             backgroundTaskScheduler = BackgroundTaskScheduler(this)
 
+            // Initialize advanced features
+            irisRecognitionEngine = IrisRecognitionEngine(this)
+            gazeTrackingEngine = GazeTrackingEngine()
+            notificationCustomizer = NotificationCustomizer(this)
+            cloudSyncManager = CloudSyncManager(this)
+
             // Initialize detection engine and frame processor
             eyeDetectionEngine = EyeDetectionEngine(this, this)
             frameProcessor = OptimizedCameraFrameProcessor(
@@ -136,7 +152,7 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
             )
 
             Timber.d("All components initialized successfully")
-            Timber.d("Optimization config: ${adaptiveFrameRateManager.getStatusMessage()}")
+            Timber.d("Advanced features: Iris, Gaze, Notifications, Cloud Sync")
         } catch (e: Exception) {
             Timber.e(e, "Failed to initialize components")
         }
@@ -311,13 +327,16 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
     }
 
     /**
-     * Create foreground notification with optimization status
+     * Create foreground notification with advanced status
      */
     private fun createNotification(): NotificationCompat.Notification {
         val statusMessage = adaptiveFrameRateManager.getStatusMessage()
+        val gazePoint = gazeTrackingEngine.getCurrentGazePoint()
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Vision Wellness")
-            .setContentText("Blinks: $blinkCountToday | $statusMessage")
+            .setContentText("Blinks: $blinkCountToday | $statusMessage | Gaze: (%.0f%%, %.0f%%)".format(
+                gazePoint.x * 100, gazePoint.y * 100
+            ))
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -353,6 +372,7 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
 
     override fun onBlinkDetected(timestamp: Long) {
         blinkCountToday++
+        irisRecognitionEngine.recordBlink()
         Timber.d("Blink detected! Total blinks today: $blinkCountToday")
         updateNotification()
         recordBlinkToDatabase()
@@ -362,7 +382,11 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
         totalStaringTimeToday += durationMs
         lastStaringTime = System.currentTimeMillis()
         Timber.w("Staring detected for ${durationMs / 1000}s! Total staring time today: ${totalStaringTimeToday / 1000}s")
-        triggerStaringAlert()
+        
+        // Check if notification should be shown (respects DND, frequency)
+        if (notificationCustomizer.shouldShowStaringAlert()) {
+            triggerStaringAlert()
+        }
     }
 
     override fun onEyesClosed(timestamp: Long) {
@@ -394,6 +418,16 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
                 )
 
                 database.blinkDao().insertBlinkData(blinkEntity)
+
+                // Sync to cloud periodically
+                if (cloudSyncManager.shouldSync()) {
+                    cloudSyncManager.syncBlinkData(
+                        userId = "user_${Build.SERIAL}",
+                        blinkCount = blinkCountToday,
+                        averageBlinkRate = blinkCountToday / (System.currentTimeMillis() / 60000f),
+                        totalStaringTime = totalStaringTimeToday
+                    )
+                }
             } catch (e: Exception) {
                 Timber.e(e, "Error recording blink data")
             }
