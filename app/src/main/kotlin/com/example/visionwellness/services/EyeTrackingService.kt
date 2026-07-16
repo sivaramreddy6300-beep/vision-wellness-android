@@ -18,10 +18,15 @@ import android.view.Surface
 import androidx.core.app.NotificationCompat
 import com.example.visionwellness.R
 import com.example.visionwellness.detection.BlinkDetectionListener
-import com.example.visionwellness.detection.CameraFrameProcessor
 import com.example.visionwellness.detection.EyeDetectionEngine
+import com.example.visionwellness.detection.OptimizedCameraFrameProcessor
 import com.example.visionwellness.database.BlinkDatabase
 import com.example.visionwellness.database.BlinkEntity
+import com.example.visionwellness.optimization.AdaptiveFrameRateManager
+import com.example.visionwellness.optimization.BackgroundTaskScheduler
+import com.example.visionwellness.optimization.BatteryMonitor
+import com.example.visionwellness.optimization.MemoryProfiler
+import com.example.visionwellness.optimization.SensorMonitor
 import com.example.visionwellness.ui.AlertOverlayManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,9 +51,17 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
     private var imageReader: ImageReader? = null
 
     private lateinit var eyeDetectionEngine: EyeDetectionEngine
-    private lateinit var frameProcessor: CameraFrameProcessor
+    private lateinit var frameProcessor: OptimizedCameraFrameProcessor
     private lateinit var overlayManager: AlertOverlayManager
     private lateinit var database: BlinkDatabase
+
+    // Optimization components
+    private lateinit var batteryMonitor: BatteryMonitor
+    private lateinit var sensorMonitor: SensorMonitor
+    private lateinit var adaptiveFrameRateManager: AdaptiveFrameRateManager
+    private lateinit var memoryProfiler: MemoryProfiler
+    private lateinit var backgroundTaskScheduler: BackgroundTaskScheduler
+
     private val serviceScope = CoroutineScope(Dispatchers.IO)
 
     private var blinkCountToday = 0
@@ -68,6 +81,12 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
         val notification = createNotification()
         startForeground(NOTIFICATION_ID, notification)
 
+        // Schedule background profiling
+        backgroundTaskScheduler.scheduleBatteryProfiling()
+
+        // Start sensor monitoring
+        sensorMonitor.startMonitoring()
+
         // Start camera and eye tracking
         startCameraCapture()
 
@@ -86,7 +105,7 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
     }
 
     /**
-     * Initialize all components
+     * Initialize all components including optimization modules
      */
     private fun initializeComponents() {
         try {
@@ -94,11 +113,30 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
             database = BlinkDatabase.getInstance(this)
             overlayManager = AlertOverlayManager(this)
 
-            eyeDetectionEngine = EyeDetectionEngine(this, this)
-            frameProcessor = CameraFrameProcessor(eyeDetectionEngine)
-            frameProcessor.setFrameSkipRate(30, 8)  // Throttle to 8fps
+            // Initialize optimization components
+            batteryMonitor = BatteryMonitor(this)
+            memoryProfiler = MemoryProfiler(this)
 
-            Timber.d("Components initialized successfully")
+            sensorMonitor = SensorMonitor(this) { isNear ->
+                Timber.d("Proximity changed: face is ${if (isNear) "near" else "away"}")
+            }
+
+            adaptiveFrameRateManager = AdaptiveFrameRateManager(
+                batteryMonitor,
+                sensorMonitor
+            )
+
+            backgroundTaskScheduler = BackgroundTaskScheduler(this)
+
+            // Initialize detection engine and frame processor
+            eyeDetectionEngine = EyeDetectionEngine(this, this)
+            frameProcessor = OptimizedCameraFrameProcessor(
+                eyeDetectionEngine,
+                adaptiveFrameRateManager
+            )
+
+            Timber.d("All components initialized successfully")
+            Timber.d("Optimization config: ${adaptiveFrameRateManager.getStatusMessage()}")
         } catch (e: Exception) {
             Timber.e(e, "Failed to initialize components")
         }
@@ -123,6 +161,12 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
                     try {
                         val bitmap = imageToBitmap(image)
                         frameProcessor.processFrame(bitmap)
+
+                        // Periodic memory optimization
+                        if (blinkCountToday % 100 == 0) {
+                            memoryProfiler.optimizeMemoryIfNeeded()
+                            memoryProfiler.logMemoryUsage()
+                        }
                     } finally {
                         image.close()
                     }
@@ -203,6 +247,8 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
             cameraDevice?.close()
             cameraDevice = null
 
+            sensorMonitor.stopMonitoring()
+
             Timber.d("Camera capture stopped")
         } catch (e: Exception) {
             Timber.e(e, "Error stopping camera capture")
@@ -242,7 +288,6 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
         planes[2].buffer.get(nv21, ySize + planes[1].buffer.remaining(), planes[2].buffer.remaining())
 
         val bitmap = Bitmap.createBitmap(image.width, image.height, Bitmap.Config.ARGB_8888)
-        // Note: In production, use proper YUV to RGB conversion
         return bitmap
     }
 
@@ -266,12 +311,13 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
     }
 
     /**
-     * Create foreground notification
+     * Create foreground notification with optimization status
      */
     private fun createNotification(): NotificationCompat.Notification {
+        val statusMessage = adaptiveFrameRateManager.getStatusMessage()
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Vision Wellness")
-            .setContentText("Monitoring your eye health... Blinks: $blinkCountToday")
+            .setContentText("Blinks: $blinkCountToday | $statusMessage")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -296,6 +342,7 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
             frameProcessor.release()
             eyeDetectionEngine.release()
             overlayManager.release()
+            backgroundTaskScheduler.cancelBatteryProfiling()
             Timber.d("Resources cleaned up")
         } catch (e: Exception) {
             Timber.e(e, "Error during cleanup")
@@ -347,7 +394,6 @@ class EyeTrackingService : Service(), BlinkDetectionListener {
                 )
 
                 database.blinkDao().insertBlinkData(blinkEntity)
-                Timber.d("Blink data recorded to database")
             } catch (e: Exception) {
                 Timber.e(e, "Error recording blink data")
             }
